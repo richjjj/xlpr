@@ -1,0 +1,27 @@
+# Dataset parameters
+alphabet: "京沪津渝冀晋蒙辽吉黑苏浙皖闽赣鲁豫鄂湘粤桂琼川贵云藏陕甘青宁新学警港澳挂使领民航应急0123456789ABCDEFGHJKLMNPQRSTUVWXYZO"
+K: 8
+
+# Data paths
+train_data: "../clpr_lmdb/train"
+val_data: "../clpr_lmdb/val"
+
+# Model configuration
+model_type: "CNN"
+pre_model: ""
+experiment: "output_test2"
+
+# Training parameters
+epochs: 100  # default is 300
+learning_rate: 0.001    # initial learning rate, previously 0.00065
+gpu: 1
+
+# Batch settings
+val_max_batchs: 200   # 节约val时间
+batch_size: 256
+num_workers: 16
+
+# Image settings
+image_width: 96
+image_height: 32
+num_channels: 1

@@ -1,243 +1,253 @@
 from __future__ import print_function
-from torch.utils.data import DataLoader
 import argparse
+from pathlib import Path
+from typing import Tuple, Dict
+import shutil
 import torch
+import torch.nn as nn
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
-import torch.utils.data
-import os
-import utils
+from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
+
 import models.LPR_model as model
-import importlib.util
-import shutil
 
-# from dataset_own import LPRDataset
-from dataset_lmdb import LPR_LMDB_Dataset
-
-
-# custom weights initialization called on lpr_model
-def weights_init(m):
-    classname = m.__class__.__name__
-    if classname.find("Conv") != -1:
-        m.weight.data.normal_(0.0, 0.02)
-    elif classname.find("BatchNorm") != -1:
-        m.weight.data.normal_(1.0, 0.02)
-        m.bias.data.fill_(0)
+from models.config import PlateConfig
+from models.dataset import create_dataloader
+from models.utils import Averager, StringLabelConverter
 
 
-def val(lpr_model, val_loader, criterion, iteration, max_i=1000, message="Val_acc"):
-    print("Start val")
-    for p in lpr_model.parameters():
-        p.requires_grad = False
-    lpr_model.eval()
-    i = 0
-    n_correct = 0
+class Trainer:
+    def __init__(self, config: PlateConfig):
+        self.config = config
+        self.device = torch.device(
+            f"cuda:{config.gpu}" if torch.cuda.is_available() else "cpu"
+        )
+        self.setup_experiment_dir()
+        self.setup_model_and_data()
+        self.setup_training()
+        self.writer = SummaryWriter(log_dir=self.experiment_dir / "tensorboard")
 
-    for i_batch, (image, label) in enumerate(val_loader):
-        image = image.to(device)
-        preds = lpr_model(image)
+    def setup_experiment_dir(self):
+        self.experiment_dir = Path(self.config.experiment)
+        self.experiment_dir.mkdir(parents=True, exist_ok=True)
+        self.config.save(Path(self.experiment_dir) / "config.yaml")
 
-        batch_size = image.size(0)
-        cost = 0
-        preds_all = preds
-        preds = torch.chunk(preds, preds.size(1), 1)
+    def setup_model_and_data(self):
+        self.train_loader = create_dataloader(
+            root_path=self.config.train_data,
+            batch_size=self.config.batch_size,
+            enable_augmentation=True,
+            enable_degrade=True,
+            shuffle=True,
+            num_workers=self.config.num_workers,
+        )
+        self.val_loader = create_dataloader(
+            root_path=self.config.val_data,
+            batch_size=self.config.batch_size,
+            enable_augmentation=False,
+            shuffle=False,
+            num_workers=self.config.num_workers,
+        )
+        # Model setup
+        self.converter = StringLabelConverter(self.config.alphabet)
+        nclass = len(self.config.alphabet) + 1
 
-        text = converter.encode_list(label, K=params.K)
-        text = text.to(device)
-        for i, item in enumerate(preds):
-            item = item.squeeze()
-            gt = text[:, i]
-            cost += criterion(item, gt) / batch_size
-
-        _, preds_all = preds_all.max(2)
-        sim_preds = converter.decode_list(preds_all.data)
-        text_label = label
-        for pred, target in zip(sim_preds, text_label):
-            pred = pred.replace("-", "")
-            if pred == target:
-                n_correct += 1
-
-        if (i_batch + 1) % params.displayInterval == 0:
-            print(
-                "[%d/%d][%d/%d] loss: %f"
-                % (iteration, params.niter, i_batch, len(val_loader), cost.data)
+        if self.config.model_type == "CNN":
+            self.model = model.LPR_model(
+                self.config.num_channels,
+                nclass,
+                imgW=self.config.image_width,
+                imgH=self.config.image_height,
+                K=self.config.K,
+            ).to(self.device)
+        else:
+            raise NotImplementedError(
+                f"Model type {self.config.model_type} not implemented"
             )
 
-        if i_batch == max_i:
-            break
-    for raw_pred, pred, gt in zip(preds_all, sim_preds, text_label):
-        raw_pred = raw_pred.data
-        pred = pred.replace("-", "")
-        print("raw_pred: %-20s, pred: %-20s, gt: %-20s" % (raw_pred, pred, gt))
+        if self.config.pre_model:
+            print(f"Loading pretrained model from {self.config.pre_model}")
+            state_dict = torch.load(self.config.pre_model, map_location=self.device)
+            self.model.load_state_dict(state_dict)
 
-    print(n_correct)
-    print(i_batch * params.val_batchSize)
-    if max_i * params.val_batchSize < len(val_dataset):
-        accuracy = n_correct / (max_i * params.val_batchSize)
-    else:
-        accuracy = n_correct / len(val_dataset)
-    print(message + " accuray: %f" % (accuracy))
-
-    return accuracy
-
-
-def train(lpr_model, train_loader, criterion, iteration):
-    for p in lpr_model.parameters():
-        p.requires_grad = True
-    lpr_model.train()
-
-    for i_batch, (image, label) in enumerate(train_loader):
-        image = image.to(device)  # image：tensor[b, 1, 32, 96]
-        text = converter.encode_list(label, K=params.K)  # tensor[b, 8]
-        text = text.to(device)
-        preds = lpr_model(image)
-
-        cost = 0
-        preds = torch.chunk(preds, preds.size(1), 1)
-        for i, item in enumerate(preds):
-            item = item.squeeze()
-            gt = text[:, i]
-            cost_item = criterion(item, gt)
-            cost += cost_item
-
-        lpr_model.zero_grad()
-        cost.backward()
-        optimizer.step()
-        loss_avg.add(cost)
-        if (i_batch + 1) % params.displayInterval == 0:
-            print(
-                "[%d/%d][%d/%d] Loss: %f lr: %f"
-                % (
-                    iteration,
-                    params.niter,
-                    i_batch,
-                    len(train_loader),
-                    loss_avg.val(),
-                    scheduler.get_last_lr()[0],
-                )
-            )
-            loss_avg.reset()
-
-
-def main(lpr_model, train_loader, val_loader, criterion):
-    lpr_model = lpr_model.to(device)
-    criterion = criterion.to(device)
-    Iteration = 0
-    best_acc = 0
-    best_epoch = 0
-    while Iteration < params.niter:
-        train(lpr_model, train_loader, criterion, Iteration)
-
-        accuracy = val(
-            lpr_model, val_loader, criterion, Iteration, max_i=params.valInterval
+    def setup_training(self):
+        self.criterion = nn.CrossEntropyLoss()
+        # self.loss_avg = Averager() # 不参与back
+        self.optimizer = optim.AdamW(
+            self.model.parameters(), lr=self.config.learning_rate
         )
 
-        for p in lpr_model.parameters():
-            p.requires_grad = True
-
-        if Iteration % params.saveInterval == 0:
-            torch.save(
-                lpr_model.state_dict(),
-                f"{params.experiment}/latest.pth",
-            )
-        print(
-            f"current accuracy: {accuracy}/{Iteration}; best accuracy : {best_acc}/{best_epoch}"
+        total_steps = self.config.epochs * len(self.train_loader)
+        self.scheduler = optim.lr_scheduler.OneCycleLR(
+            self.optimizer,
+            max_lr=self.config.learning_rate,
+            total_steps=total_steps,
+            pct_start=0.075,
         )
-        if accuracy > best_acc:
-            best_path = f"{params.experiment}/best_model.pth"
-            torch.save(
-                lpr_model.state_dict(),
-                best_path,
+
+    def save_checkpoint(
+        self, epoch: int, accuracy: float, is_best: bool = False
+    ) -> None:
+        checkpoint = {
+            "epoch": epoch,
+            "state_dict": self.model.state_dict(),
+            "accuracy": accuracy,
+        }
+
+        # Save latest checkpoint
+        torch.save(checkpoint, self.experiment_dir / "latest.pth")
+
+        # Save best model
+        if is_best:
+            best_path = self.experiment_dir / "best_model.pth"
+            torch.save(checkpoint, best_path)
+
+    @torch.no_grad()
+    def validate(self, epoch: int, max_batches: int = 1000) -> Tuple[float, Dict]:
+        self.model.eval()
+        correct = 0
+        total = 0
+        val_loss = 0
+
+        pbar = tqdm(
+            self.val_loader,
+            desc=f"Validation Epoch {epoch}",
+            total=min(max_batches, len(self.val_loader)),
+        )
+
+        for batch_idx, (images, labels) in enumerate(pbar):
+            if batch_idx >= max_batches:
+                break
+
+            images = images.to(self.device)
+            batch_size = images.size(0)
+
+            # Forward pass
+            predictions = self.model(images)
+            text = self.converter.encode_list(labels, self.config.K).to(self.device)
+
+            # Calculate loss
+            loss = 0
+            preds_chunks = torch.chunk(predictions, predictions.size(1), 1)
+            for i, pred_chunk in enumerate(preds_chunks):
+                pred_chunk = pred_chunk.squeeze()
+                gt = text[:, i]
+                loss += self.criterion(pred_chunk, gt) / batch_size
+
+            val_loss += loss.item()
+
+            # Calculate accuracy
+            _, pred_indices = predictions.max(2)
+            pred_labels = self.converter.decode_list(pred_indices.data)
+
+            for pred, target in zip(pred_labels, labels):
+                pred = pred.replace("-", "")
+                if pred == target:
+                    correct += 1
+            total += batch_size
+
+            # Update progress bar
+            pbar.set_postfix(
+                {
+                    "loss": f"{val_loss/(batch_idx+1):.4f}",
+                    "acc": f"{100.*correct/total:.2f}%",
+                }
             )
-            best_acc = accuracy
-            best_epoch = Iteration
 
-        scheduler.step()
-        Iteration += 1
-    shutil.copy(
-        f"{params.experiment}/best_model.pth",
-        f"{params.experiment}/best_model_{best_epoch}_{best_acc}.pth",
-    )
+        accuracy = correct / total
+        metrics = {"val_loss": val_loss / (batch_idx + 1), "val_accuracy": accuracy}
+
+        return accuracy, metrics
+
+    def train_epoch(self, epoch: int) -> Dict:
+        self.model.train()
+        total_loss = 0
+
+        pbar = tqdm(self.train_loader, desc=f"Training Epoch {epoch}")
+
+        for batch_idx, (images, labels) in enumerate(pbar):
+            images = images.to(self.device)
+            text = self.converter.encode_list(labels, self.config.K).to(self.device)
+
+            predictions = self.model(images)
+            loss = 0
+            preds_chunks = torch.chunk(predictions, predictions.size(1), 1)
+
+            for i, pred_chunk in enumerate(preds_chunks):
+                pred_chunk = pred_chunk.squeeze()
+                gt = text[:, i]
+                loss += self.criterion(pred_chunk, gt)
+
+            # Backward pass
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            self.scheduler.step()
+
+            total_loss += loss.item()
+            current_lr = self.scheduler.get_last_lr()[0]
+
+            # Update progress bar
+            pbar.set_postfix(
+                {"loss": f"{total_loss/(batch_idx+1):.4f}", "lr": f"{current_lr:.6f}"}
+            )
+
+        metrics = {
+            "train_loss": total_loss / (batch_idx + 1),
+            "learning_rate": current_lr,
+        }
+
+        return metrics
+
+    def train(self):
+        best_accuracy = 0
+
+        for epoch in range(self.config.epochs):
+            # Training phase
+            train_metrics = self.train_epoch(epoch)
+
+            # Validation phase
+            accuracy, val_metrics = self.validate(
+                epoch, max_batches=self.config.val_max_batchs
+            )
+
+            # Log metrics
+            all_metrics = {**train_metrics, **val_metrics}
+            for name, value in all_metrics.items():
+                self.writer.add_scalar(name, value, epoch)
+
+            # Save checkpoints
+            is_best = accuracy > best_accuracy
+            if is_best:
+                best_accuracy = accuracy
+
+            self.save_checkpoint(epoch, accuracy, is_best)
+
+            print(f"Epoch {epoch}: Accuracy={accuracy:.4f} (Best={best_accuracy:.4f})")
+        shutil.copy(
+            self.experiment_dir / "best_model.pth",
+            self.experiment_dir / f"best_{best_accuracy:.4f}.pth",
+        )
 
 
-def backward_hook(module, grad_input, grad_output):
-    for g in grad_input:
-        g[g != g] = 0  # replace all nan/inf in gradients to zero
+def main():
+    parser = argparse.ArgumentParser(description="LPR Model Training Parameters")
+    parser.add_argument("-p", "--params_path", type=str, default="configs/plate.yaml")
+    args = parser.parse_args()
+    config = PlateConfig.from_yaml(args.params_path)
+    # Set random seed for reproducibility
+    if hasattr(config, "seed"):
+        torch.manual_seed(config.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(config.seed)
+
+    cudnn.benchmark = True
+
+    # Start training
+    trainer = Trainer(config)
+    trainer.train()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="LPR Model Training Parameters")
-    parser.add_argument("-p", "--params_path", type=str, default="configs/plate.py")
-    args = parser.parse_args()
-
-    spec = importlib.util.spec_from_file_location("params", args.params_path)
-    params = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(params)
-
-    if not os.path.exists(params.experiment):
-        os.makedirs(params.experiment)
-    # manualSeed = 1111
-    # random.seed(manualSeed)
-    # np.random.seed(manualSeed)
-    # torch.manual_seed(manualSeed)
-    # torch.cuda.manual_seed(manualSeed)
-    cudnn.deterministic = True
-    cudnn.benchmark = False
-    device = torch.device(
-        "cuda:" + str(params.gpu) if torch.cuda.is_available() else "cpu"
-    )
-
-    dataset = LPR_LMDB_Dataset(params.train_data, isAug=True, isdegrade=True)
-    val_dataset = LPR_LMDB_Dataset(params.val_data, isAug=False, isdegrade=False)
-
-    train_loader = DataLoader(
-        dataset, batch_size=params.batchSize, shuffle=True, num_workers=params.workers
-    )
-    print("train_loader", len(train_loader))
-    # shuffle=True, just for time consuming.
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=params.val_batchSize,
-        shuffle=False,
-        num_workers=params.workers,
-    )
-
-    converter = utils.strLabelConverter(params.alphabet)
-    nclass = len(params.alphabet) + 1
-    nc = params.nc
-
-    criterion = torch.nn.CrossEntropyLoss()
-
-    # cnn or others
-    if params.model_type == "CNN":
-        lpr_model = model.LPR_model(
-            nc, nclass, imgW=params.imgW, imgH=params.imgH, K=params.K
-        ).to(device)
-    else:
-        print("未实现")
-        pass
-    if params.pre_model != "":
-        print("loading pretrained model from %s" % params.pre_model)
-        lpr_model.load_state_dict(torch.load(params.pre_model, map_location=device))
-    else:
-        lpr_model.apply(weights_init)
-
-    # loss averager
-    loss_avg = utils.averager()
-
-    # setup optimizer
-    if params.adam:
-        optimizer = optim.Adam(
-            lpr_model.parameters(), lr=params.lr, betas=(params.beta1, 0.999)
-        )
-    elif params.adadelta:
-        optimizer = optim.Adadelta(lpr_model.parameters(), lr=params.lr)
-    else:
-        optimizer = optim.RMSprop(lpr_model.parameters(), lr=params.lr)
-
-    # TODO 修改学习率策略
-    scheduler = optim.lr_scheduler.StepLR(
-        optimizer, step_size=params.lr_step, gamma=0.8
-    )
-    # lpr_model.register_backward_hook(backward_hook)
-    main(lpr_model, train_loader, val_loader, criterion)
+    main()

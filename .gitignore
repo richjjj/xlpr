@@ -26,5 +26,6 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-
+output*/
 *.pth
+!weights/*.pth
