@@ -13,7 +13,7 @@ experiment: "output_test2"
 
 # Training parameters
 epochs: 100  # default is 300
-learning_rate: 0.001    # initial learning rate, previously 0.00065
+learning_rate: 0.0001    # initial learning rate, previously 0.00065
 gpu: 1
 
 # Batch settings
