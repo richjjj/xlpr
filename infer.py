@@ -28,14 +28,17 @@ if __name__ == "__main__":
     )
     parser.add_argument("-i", "--image_path", type=str, default="imgs/1.jpg")
     args = parser.parse_args()
-    alphabet = "京沪津渝冀晋蒙辽吉黑苏浙皖闽赣鲁豫鄂湘粤桂琼川贵云藏陕甘青宁新学警港澳挂使领民航应急0123456789ABCDEFGHJKLMNPQRSTUVWXYZOI"
+    alphabet = "京沪津渝冀晋蒙辽吉黑苏浙皖闽赣鲁豫鄂湘粤桂琼川贵云藏陕甘青宁新学警港澳挂使领民航应急0123456789ABCDEFGHJKLMNPQRSTUVWXYZO"
     alphabet = "-" + alphabet
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     device = "cpu"
     lpr_model = model.LPR_model(nc=1, nclass=len(alphabet)).to(device)
+    state_dict = torch.load(args.weights_path, weights_only=True, map_location=device)
+    if "state_dict" in state_dict:
+        state_dict = state_dict["state_dict"]
     lpr_model.load_state_dict(
-        torch.load(args.weights_path, weights_only=True, map_location=device)
+        state_dict
     )
     lpr_model.eval()
 
