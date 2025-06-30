@@ -35,14 +35,14 @@ class Attention_module_FC_2(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
         # 反卷积层
+        # 改进方案：使用kernel_size=4避免output_padding, rknn等框架不支持
         self.deconv1 = nn.ConvTranspose2d(
-            channels[2], 64, kernel_size=3, stride=2, padding=1, output_padding=1
-        )
-        self.bn1 = nn.BatchNorm2d(64)
-
+            channels[2], 64, kernel_size=4, stride=2, padding=1  # 去掉output_padding
+            )
         self.deconv2 = nn.ConvTranspose2d(
-            64, self.K, kernel_size=3, stride=2, padding=1, output_padding=1
-        )
+            64, self.K, kernel_size=4, stride=2, padding=1
+            )
+        self.bn1 = nn.BatchNorm2d(64)
         self.bn2 = nn.BatchNorm2d(self.K)
 
     def forward(self, input):
