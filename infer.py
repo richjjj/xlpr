@@ -3,7 +3,31 @@ import argparse
 import torch
 import cv2
 import numpy as np
+def adapt_weights(old_state, new_model):
+    new_state = new_model.state_dict()
 
+    for name, param in new_state.items():
+        if 'deconv' in name and 'weight' in name:
+            old_param = old_state[name]
+            if old_param.shape != param.shape:
+                # 权重尺寸适配（简单的中心填充或裁剪）
+                if param.shape[-1] > old_param.shape[-1]:  # 需要填充
+                    # 中心填充
+                    new_param = torch.zeros_like(param)
+                    pad = (param.shape[-1] - old_param.shape[-1]) // 2
+                    new_param[:, :, pad:pad+old_param.shape[-2], pad:pad+old_param.shape[-1]] = old_param
+                    new_state[name] = new_param
+                else:  # 需要裁剪
+                    # 中心裁剪
+                    pad = (old_param.shape[-1] - param.shape[-1]) // 2
+                    new_state[name] = old_param[:, :, pad:pad+param.shape[-2], pad:pad+param.shape[-1]]
+            else:
+                new_state[name] = old_param
+        else:
+            new_state[name] = old_state[name]
+
+    new_model.load_state_dict(new_state)
+    return new_model
 
 def infer(lpr_model, image_path, device):
     image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
