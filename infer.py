@@ -61,6 +61,8 @@ if __name__ == "__main__":
     state_dict = torch.load(args.weights_path, weights_only=True, map_location=device)
     if "state_dict" in state_dict:
         state_dict = state_dict["state_dict"]
+    # attention没修改的话 则不用调整权重。只是为了适配rknn框架
+    adapt_weights(state_dict, lpr_model) 
     lpr_model.load_state_dict(
         state_dict
     )
