@@ -3,6 +3,8 @@ import argparse
 import torch
 import cv2
 import numpy as np
+import math
+
 def adapt_weights(old_state, new_model):
     new_state = new_model.state_dict()
 
@@ -36,10 +38,12 @@ def infer(lpr_model, image_path, device):
     np_array = image.astype("float32") / 255.0
     np_array = np_array.reshape(1, 1, 32, 96)
     input = torch.from_numpy(np_array).to(device)
-    output = lpr_model(input)
-    _, preds = output.max(2)
+    with torch.no_grad():
+        output = lpr_model(input)
+        probabilities = torch.softmax(output, dim=2)
+        confidences, preds = probabilities.max(2)
 
-    return preds.detach().cpu().numpy()
+    return preds.detach().cpu().numpy(), confidences.detach().cpu().numpy()
 
 
 if __name__ == "__main__":
@@ -67,7 +71,19 @@ if __name__ == "__main__":
     lpr_model.eval()
 
     image_path = args.image_path
-    preds = infer(lpr_model, image_path, device)
+    preds, confidences = infer(lpr_model, image_path, device)
     print(preds)
-    text = "".join(alphabet[p] for p in preds[0] if p != 0)
+    plate_chars = []
+    char_confidences = []
+    for idx, p in enumerate(preds[0]):
+        if p != 0:
+            plate_chars.append(alphabet[p])
+            char_confidences.append(float(confidences[0][idx]))
+    text = "".join(plate_chars)
     print(text)
+    if char_confidences:
+        plate_confidence = float(math.prod(char_confidences))
+        print("Char confidences:", " ".join(f"{c:.4f}" for c in char_confidences))
+        print(f"Plate confidence: {plate_confidence:.4f}")
+    else:
+        print("No valid characters detected.")

@@ -29,3 +29,5 @@ MANIFEST
 output*/
 *.pth
 !weights/*.pth
+*.onnx
+.vscode/
