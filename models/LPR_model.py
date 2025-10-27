@@ -10,7 +10,9 @@ class LPR_model(nn.Module):
 
         self.encoder = HCEncoder_2(nc)
 
-        self.attention = Attention_module_FC_2(nc=128, K=K, downsample=4)
+        self.attention = Attention_module_FC_2(
+            nc=128, K=K, downsample=4, w=imgW, h=imgH
+        )
 
         self.decoder = FCDecoder(nclass, input_dim=128)
 

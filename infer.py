@@ -31,12 +31,12 @@ def adapt_weights(old_state, new_model):
     new_model.load_state_dict(new_state)
     return new_model
 
-def infer(lpr_model, image_path, device):
+def infer(lpr_model, image_path, device, img_width: int, img_height: int):
     image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    image = cv2.resize(image, (96, 32))
+    image = cv2.resize(image, (img_width, img_height))
 
     np_array = image.astype("float32") / 255.0
-    np_array = np_array.reshape(1, 1, 32, 96)
+    np_array = np_array.reshape(1, 1, img_height, img_width)
     input = torch.from_numpy(np_array).to(device)
     with torch.no_grad():
         output = lpr_model(input)
@@ -55,13 +55,30 @@ if __name__ == "__main__":
         default="output_1/best_model.pth",
     )
     parser.add_argument("-i", "--image_path", type=str, default="imgs/1.jpg")
+    parser.add_argument(
+        "--img-width",
+        type=int,
+        default=96,
+        help="Input image width used for preprocessing/inference.",
+    )
+    parser.add_argument(
+        "--img-height",
+        type=int,
+        default=32,
+        help="Input image height used for preprocessing/inference.",
+    )
     args = parser.parse_args()
     alphabet = "京沪津渝冀晋蒙辽吉黑苏浙皖闽赣鲁豫鄂湘粤桂琼川贵云藏陕甘青宁新学警港澳挂使领民航应急0123456789ABCDEFGHJKLMNPQRSTUVWXYZO"
     alphabet = "-" + alphabet
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     device = "cpu"
-    lpr_model = model.LPR_model(nc=1, nclass=len(alphabet)).to(device)
+    lpr_model = model.LPR_model(
+        nc=1,
+        nclass=len(alphabet),
+        imgW=args.img_width,
+        imgH=args.img_height,
+    ).to(device)
     state_dict = torch.load(args.weights_path, weights_only=True, map_location=device)
     if "state_dict" in state_dict:
         state_dict = state_dict["state_dict"]
@@ -71,7 +88,13 @@ if __name__ == "__main__":
     lpr_model.eval()
 
     image_path = args.image_path
-    preds, confidences = infer(lpr_model, image_path, device)
+    preds, confidences = infer(
+        lpr_model,
+        image_path,
+        device,
+        img_width=args.img_width,
+        img_height=args.img_height,
+    )
     print(preds)
     plate_chars = []
     char_confidences = []

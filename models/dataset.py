@@ -111,6 +111,8 @@ class DatasetConfig:
     def __post_init__(self):
         if isinstance(self.root_path, str):
             self.root_path = [self.root_path]
+        if self.img_width <= 0 or self.img_height <= 0:
+            raise ValueError("Image width and height must be positive integers.")
 
 
 class LPRDataset(Dataset):
@@ -187,7 +189,9 @@ class LPRDataset(Dataset):
 
     def _apply_degrade(self, image_array: np.ndarray) -> np.ndarray:
         """应用图像降质"""
-        degraded = cv2.resize(image_array, (64, 24))
+        degrade_w = max(1, int(self.config.img_width * 2 / 3))
+        degrade_h = max(1, int(self.config.img_height * 3 / 4))
+        degraded = cv2.resize(image_array, (degrade_w, degrade_h))
         degraded = cv2.resize(degraded, (self.config.img_width, self.config.img_height))
         return (
             np.reshape(degraded, (self.config.img_height, self.config.img_width, 1))
@@ -227,9 +231,13 @@ if __name__ == "__main__":
         use_ratio=0.1,
         enable_augmentation=True,
     )
+    dataset = dataloader.dataset
+    cfg = dataset.config
 
     for i_batch, (image, label) in enumerate(dataloader):
-        aug_img = torch.reshape(image[0], (32, 96))
+        aug_img = torch.reshape(
+            image[0], (cfg.img_height, cfg.img_width)
+        )
         aug_img = aug_img.numpy() * 255
         cv2.imwrite(f"augmented_sample_{i_batch}.png", aug_img)
         break  # 只保存第一个批次的图像

@@ -81,7 +81,12 @@ def main():
     alphabet = "京沪津渝冀晋蒙辽吉黑苏浙皖闽赣鲁豫鄂湘粤桂琼川贵云藏陕甘青宁新学警港澳挂使领民航应急0123456789ABCDEFGHJKLMNPQRSTUVWXYZO"
     alphabet = "-" + alphabet
 
-    model = LPR_model(nc=1, nclass=len(alphabet)).to(device)
+    model = LPR_model(
+        nc=1,
+        nclass=len(alphabet),
+        imgW=args.img_width,
+        imgH=args.img_height,
+    ).to(device)
 
     state_dict = torch.load(args.weights_path, map_location=device, weights_only=True)
     if "state_dict" in state_dict:

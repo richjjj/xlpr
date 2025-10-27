@@ -6,10 +6,16 @@ class Attention_module_FC_2(nn.Module):
     def __init__(self, nc, K=8, downsample=4, w=96, h=32):
         super().__init__()
         self.K = K
-        self.w = w
-        self.h = h
+        self.downsample = downsample
 
         channels = [512, 256, 128]
+        pooled_w, pooled_h = self._compute_spatial_size(w, h, downsample)
+        fc_dim = pooled_w * pooled_h
+        if fc_dim <= 0:
+            raise ValueError(
+                f"Invalid feature size {pooled_w}x{pooled_h} for input {w}x{h}. "
+                "Please double-check the provided image dimensions."
+            )
 
         self.atten_0 = nn.Sequential(
             nn.Conv2d(nc, channels[1], 3, 1, 1),
@@ -25,8 +31,6 @@ class Attention_module_FC_2(nn.Module):
             nn.MaxPool2d(2),
         )
 
-        # FC层的维度计算
-        fc_dim = int(self.w * self.h / downsample / downsample / 16)
         self.atten_fc1 = nn.Linear(fc_dim, fc_dim)
         self.atten_fc2 = nn.Linear(fc_dim, fc_dim)
 
@@ -68,3 +72,27 @@ class Attention_module_FC_2(nn.Module):
         atten_out = atten_out.view(batch_size, self.K, -1)
 
         return atten_out
+
+    def _compute_spatial_size(self, width: int, height: int, downsample: int):
+        encoder_pools = self._pool_count(downsample)
+        total_pools = encoder_pools + 2  # 额外两个池化来自注意力模块
+        pooled_w = self._apply_pooling(width, total_pools)
+        pooled_h = self._apply_pooling(height, total_pools)
+        return pooled_w, pooled_h
+
+    @staticmethod
+    def _apply_pooling(size: int, count: int) -> int:
+        for _ in range(count):
+            size = (size + 1) // 2
+        return size
+
+    @staticmethod
+    def _pool_count(downsample: int) -> int:
+        count = 0
+        value = max(downsample, 1)
+        while value > 1:
+            if value % 2 != 0:
+                raise ValueError("downsample must be a power of two.")
+            value //= 2
+            count += 1
+        return count

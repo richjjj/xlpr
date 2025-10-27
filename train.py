@@ -37,6 +37,8 @@ class Trainer:
         self.train_loader = create_dataloader(
             root_path=self.config.train_data,
             batch_size=self.config.batch_size,
+            image_width=self.config.image_width,
+            image_height=self.config.image_height,
             enable_augmentation=True,
             enable_degrade=True,
             shuffle=True,
@@ -45,6 +47,8 @@ class Trainer:
         self.val_loader = create_dataloader(
             root_path=self.config.val_data,
             batch_size=self.config.batch_size,
+            image_width=self.config.image_width,
+            image_height=self.config.image_height,
             enable_augmentation=False,
             shuffle=False,
             num_workers=self.config.num_workers,
